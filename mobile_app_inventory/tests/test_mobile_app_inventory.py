@@ -11,7 +11,6 @@ class TestMobileAppInventory(common.TransactionCase):
 
     def setUp(self):
         super(TestMobileAppInventory, self).setUp()
-        cr, uid = self.cr, self.uid
         self.chips_barcode = '5400313040109'
 
         self.app_obj = self.env['mobile.app.inventory']
@@ -20,6 +19,9 @@ class TestMobileAppInventory(common.TransactionCase):
         self.product_chips = self.env.ref(
             'mobile_app_inventory.product_chips_paprika')
         self.stock_location = self.env.ref('stock.stock_location_stock')
+
+        self.shelf_2_inventory = self.env.ref(
+            'mobile_app_inventory.shelf_2_inventory')
 
     def _get_inventory_single_line(self, inventory_id):
         """Private function that return the first line of an inventory
@@ -69,17 +71,17 @@ class TestMobileAppInventory(common.TransactionCase):
     def test_03_create_inventory(self):
         """Test if inventory and lines are created correctly"""
         # Create Inventory
-        inventory_data = self.app_obj.create_inventory(
+        json_inventory = self.app_obj.create_inventory(
             {'inventory': {'name': 'Test'}})
 
         self.assertNotEqual(
-            type(inventory_data) is dict and inventory_data.get('id') or False,
+            type(json_inventory) is dict and json_inventory.get('id') or False,
             False, "Inventory creation failed by Mobile App")
 
-        inventory_id = inventory_data['id']
+        inventory_id = json_inventory['id']
         # Create new inventory Line
         self.app_obj.add_inventory_line({
-            'inventory': {'id': inventory_data['id']},
+            'inventory': {'id': json_inventory['id']},
             'location': {'id': self.stock_location.id},
             'product': {'id': self.product_chips.id},
             'qty': 10,
@@ -98,7 +100,7 @@ class TestMobileAppInventory(common.TransactionCase):
 
         # Add same product (ask mode) and test
         self.app_obj.add_inventory_line({
-            'inventory': {'id': inventory_data['id']},
+            'inventory': {'id': json_inventory['id']},
             'location': {'id': self.stock_location.id},
             'product': {'id': self.product_chips.id},
             'qty': 11,
@@ -111,7 +113,7 @@ class TestMobileAppInventory(common.TransactionCase):
 
         # Add same product (replace mode) and test
         self.app_obj.add_inventory_line({
-            'inventory': {'id': inventory_data['id']},
+            'inventory': {'id': json_inventory['id']},
             'location': {'id': self.stock_location.id},
             'product': {'id': self.product_chips.id},
             'qty': 30,
@@ -125,7 +127,7 @@ class TestMobileAppInventory(common.TransactionCase):
 
         # Add same product (add mode) and test
         self.app_obj.add_inventory_line({
-            'inventory': {'id': inventory_data['id']},
+            'inventory': {'id': json_inventory['id']},
             'location': {'id': self.stock_location.id},
             'product': {'id': self.product_chips.id},
             'qty': 70,
@@ -150,29 +152,53 @@ class TestMobileAppInventory(common.TransactionCase):
 
     def test_05_child_of_location(self):
         """It should only return child of location."""
-        inventory = self.app_obj.create_inventory(
-            {'inventory': {'name': 'Test'}})
-
         list_full = self.app_obj.get_locations({})
         list_sub = self.app_obj.get_locations(
-            {'inventory': {'id': inventory['id']}})
-        self.assertTrue(len(list_full) > len(list_sub))
+            {'inventory': {'id': self.shelf_2_inventory.id}})
+        self.assertGreater(
+            len(list_full), len(list_sub),
+            "Getting available locations of an inventory should"
+            " return only sub locations of the main location of the inventory")
 
-    def test_06_unkown_products(self):
-        """It should accept unkown products (without id)."""
-        inventory = self.app_obj.create_inventory(
+    def test_06_unkown_product_id(self):
+        """Test adding inventory line via barcode product"""
+        json_inventory = self.app_obj.create_inventory(
             {'inventory': {'name': 'Test'}})
 
-        # Create new inventory Line
-        try:
-            self.app_obj.add_inventory_line({
-                'inventory': {'id': inventory['id']},
-                'location': {'id': self.stock_location.id},
-                'product': {'id': None, 'barcode': '0012345678905'},
-                'qty': 3,
-                'mode': 'ask',
-            })
-            self.assertTrue(True)
-        except Exception:
-            self.assertTrue(False)
-        # it should not raise exception
+        res = self.app_obj.add_inventory_line({
+            'inventory': {'id': json_inventory['id']},
+            'location': {'id': self.stock_location.id},
+            'product': {'barcode': '5400313040109'},
+            'qty': 3,
+            'mode': 'ask',
+        })
+        self.assertEqual(
+            type(res) == dict and res.get('state', False) or False, 'write_ok',
+            "Adding inventory line via barcode should works")
+
+    def test_07_unkown_barcode(self):
+        """Test adding unknown inventory line via unknown barcode"""
+        json_inventory = self.app_obj.create_inventory(
+            {'inventory': {'name': 'Test'}})
+
+        self.app_obj.add_inventory_line({
+            'inventory': {'id': json_inventory['id']},
+            'location': {'id': self.stock_location.id},
+            'product': {'barcode': '1234567890123'},
+            'qty': 10,
+            'mode': 'ask',
+        })
+        inventory = self.inventory_obj.browse(json_inventory['id'])
+        self.assertEqual(
+            inventory.unknown_line_qty, 1,
+            "Scanning unknown barcode should create a new unknown line")
+
+        self.assertEqual(
+            inventory.unknown_line_ids[0].barcode, '1234567890123',
+            "Scanning unknown barcode should create a new unknown line"
+            " with the according barcode")
+
+        self.assertEqual(
+            inventory.unknown_line_ids[0].quantity, 10,
+            "Scanning unknown barcode should create a new unknown line"
+            " with the according quantity")

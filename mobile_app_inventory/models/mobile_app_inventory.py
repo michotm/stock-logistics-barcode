@@ -51,6 +51,7 @@ class MobileAppInventory(models.Model):
             'filter': 'partial',
         })
         inventory = inventory_obj.create(vals)
+        inventory.prepare_inventory()
         return self._export_inventory(inventory)
 
     @api.model
@@ -82,7 +83,8 @@ class MobileAppInventory(models.Model):
         inventory_obj = self.env['stock.inventory']
         inventory_id = self._extract_param(params, 'inventory.id')
         inventories = inventory_obj.browse(inventory_id)
-        lines = inventories.line_ids
+        lines = inventories.line_ids.filtered(
+            lambda line: line.product_id.ean13)
         custom_fields = self._get_custom_fields()
         return [
             self._export_inventory_line(line, custom_fields) for line in lines]
@@ -96,14 +98,8 @@ class MobileAppInventory(models.Model):
             _export_location() for location vals details
             _export_product() for product vals details
         """
-        product_obj = self.env['product.product']
         barcode = self._extract_param(params, 'barcode')
-        products = product_obj.search([('ean13', '=', barcode)])
-        barcode_qty = 0
-        if not products:
-            product, barcode_qty = self._guess_product_qty(barcode)
-        else:
-            product = products[0]
+        (product, barcode_qty) = self._search_barcode(barcode)
         if not product:
             return False
         else:
@@ -138,22 +134,36 @@ class MobileAppInventory(models.Model):
         inventory_id = self._extract_param(params, 'inventory.id')
         location_id = self._extract_param(params, 'location.id')
         product_id = self._extract_param(params, 'product.id')
+        barcode = self._extract_param(params, 'product.barcode')
         qty = self._extract_param(params, 'qty')
         mode = self._extract_param(params, 'mode')
         inventory = inventory_obj.browse(inventory_id)
-        product = product_obj.browse(product_id)
-
         qty = qty and float(qty) or 0.0
+        product = False
+        if product_id:
+            product = product_obj.browse(product_id)
+        elif barcode:
+            (product, barcode_qty) = self._search_barcode(barcode)
+        if not product:
+            if barcode:
+                inventory_vals = {'unknown_line_ids': [[0, False, {
+                    'barcode': barcode,
+                    'quantity': qty,
+                }]]}
+                inventory.write(inventory_vals)
+                return {'state': 'unknown_barcode_added'}
+            else:
+                return {'state': 'no_barcode'}
 
         # Check if there is existing line with the product
         lines = line_obj.search([
             ('inventory_id', '=', inventory.id),
             ('location_id', '=', location_id),
-            ('product_id', '=', product_id)])
+            ('product_id', '=', product.id)])
         if not lines:
             line_vals = {
                 'location_id': location_id,
-                'product_id': product_id,
+                'product_id': product.id,
                 'product_uom_id': product.uom_id.id,
                 'product_qty': qty,
             }
@@ -290,3 +300,17 @@ class MobileAppInventory(models.Model):
         for field_name in custom_field_names:
             res[field_name] = _get_field_display(self, field_name)
         return res
+
+    @api.model
+    def _search_barcode(self, barcode):
+        product_obj = self.env['product.product']
+        products = product_obj.search([('ean13', '=', barcode)])
+        barcode_qty = 0
+        if not products:
+            product, barcode_qty = self._guess_product_qty(barcode)
+        else:
+            product = products[0]
+        if not product:
+            return (False, False)
+        else:
+            return (product, barcode_qty)
