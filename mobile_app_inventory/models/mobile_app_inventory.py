@@ -160,7 +160,7 @@ class MobileAppInventory(models.Model):
             ('inventory_id', '=', inventory.id),
             ('location_id', '=', location_id),
             ('product_id', '=', product.id)])
-        if not lines or lines[0].product_qty == 0:
+        if not lines:
             line_vals = {
                 'location_id': location_id,
                 'product_id': product.id,
@@ -171,10 +171,10 @@ class MobileAppInventory(models.Model):
             inventory.write(inventory_vals)
             return {'state': 'write_ok'}
         elif len(lines) == 1:
-            if mode == 'ask':
-                return {'state': 'duplicate', 'qty': lines[0].product_qty}
-            elif mode == 'add':
+            if mode == 'add' or lines[0].product_qty == 0:
                 qty += lines[0].product_qty
+            elif mode == 'ask':
+                return {'state': 'duplicate', 'qty': lines[0].product_qty}
             lines[0].write({'product_qty': qty})
             return {'state': 'write_ok'}
         else:
